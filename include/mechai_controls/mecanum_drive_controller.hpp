@@ -1,6 +1,13 @@
 #ifndef MECANUM_DRIVE_CONTROLLER__MECANUM_DRIVE_CONTROLLER_HPP_
 #define MECANUM_DRIVE_CONTROLLER__MECANUM_DRIVE_CONTROLLER_HPP_
 
+#include <queue>
+#include <chrono>
+#include <string>
+#include <vector>
+#include <cmath>
+#include <memory>
+
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_lifecycle/state.hpp>
 #include <controller_interface/controller_interface.hpp>
@@ -44,7 +51,7 @@ namespace mecanum_drive_controller {
     protected:
       struct WheelHandle {
         std::reference_wrapper<const hardware_interface::LoanedStateInterface> feedback;
-        std::reference_wrapper<hardware_interface::LoanedCommandInterface> velocity;
+        std::reference_wrapper<const hardware_interface::LoanedCommandInterface> velocity;
       };
 
       std::vector<std::string> wheel_names_;
@@ -54,6 +61,7 @@ namespace mecanum_drive_controller {
         double separation = 0.0;  // w.r.t. the midpoint of the wheel width
         double radius = 0.0;      // Assumed to be the same for both wheels
         double separation_multiplier = 1.0;
+        double radius_multiplier = 1.0;
       } wheel_params_;
 
       struct OdometryParams {
@@ -71,13 +79,18 @@ namespace mecanum_drive_controller {
 
       realtime_tools::RealtimeBox<std::shared_ptr<Twist>> received_velocity_msg_ptr_{nullptr};
 
+      std::queue<Twist> previous_commands_;  // last two commands
+
       auto feedback_type() const;
 
-      bool is_halted;
       std::chrono::milliseconds cmd_vel_timeout_{500};
+
+      bool is_halted = false;
+      bool use_stamped_vel_ = true;
 
       bool reset();
       void halt();
+      bool configure_wheel_handles(const std::vector<std::string> & wheel_names, std::vector<WheelHandle> & registered_handles);
 
   };
 } // namespace mecanum_drive_controller

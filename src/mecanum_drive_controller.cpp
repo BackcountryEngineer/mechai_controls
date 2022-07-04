@@ -38,6 +38,7 @@ namespace mecanum_drive_controller {
       auto_declare<double>("wheel_separation", wheel_params_.separation);
       auto_declare<double>("wheel_radius", wheel_params_.radius);
       auto_declare<double>("wheel_separation_multiplier", wheel_params_.separation_multiplier);
+      auto_declare<double>("wheel_radius_multiplier", wheel_params_.radius_multiplier);
 
       auto_declare<bool>("position_feedback", odom_params_.position_feedback);
 
@@ -104,7 +105,117 @@ namespace mecanum_drive_controller {
     return controller_interface::return_type::OK;
   }
 
-  // CallbackReturn MecanumDriveController::on_configure(const rclcpp_lifecycle::State&) {
-  //   auto logger = node_->get_logger();
-  // }
+  CallbackReturn MecanumDriveController::on_configure(const rclcpp_lifecycle::State &) {
+    auto logger = node_->get_logger();
+    wheel_names_ = node_->get_parameter("wheel_names").as_string_array();
+    if (wheel_names_.empty()) {
+      RCLCPP_ERROR(logger, "Wheel names parameters are empty!");
+      return CallbackReturn::ERROR;
+    }
+
+    wheel_params_.separation = node_->get_parameter("wheel_separation").as_double();
+    wheel_params_.radius = node_->get_parameter("wheel_radius").as_double();
+    wheel_params_.separation_multiplier = node_->get_parameter("wheel_separation_multiplier").as_double();
+    wheel_params_.radius_multiplier = node_->get_parameter("wheel_radius_multiplier").as_double();
+
+    const double wheel_separation = wheel_params_.separation_multiplier * wheel_params_.separation;
+    const double wheel_radius = wheel_params_.radius_multiplier * wheel_params_.radius;
+
+    odom_params_.open_loop = node_->get_parameter("open_loop").as_bool();
+    odom_params_.position_feedback = node_->get_parameter("position_feedback").as_bool();
+
+    cmd_vel_timeout_ = std::chrono::milliseconds{static_cast<int>(node_->get_parameter("cmd_vel_timeout").as_double() * 1000.0)};
+
+    const Twist empty_twist;
+    received_velocity_msg_ptr_.set(std::make_shared<Twist>(empty_twist));
+
+    previous_commands_.emplace(empty_twist);
+    previous_commands_.emplace(empty_twist);
+
+    if (use_stamped_vel_) {
+      velocity_command_subscriber_ = node_->create_subscription<Twist>(DEFAULT_COMMAND_TOPIC, rclcpp::SystemDefaultsQoS(), [this](const std::shared_ptr<Twist> msg) -> void {
+        if (!subscriber_is_active_) {
+          RCLCPP_WARN(node_->get_logger(), "Command subscriber inactive");
+          return;
+        }
+        if ((msg->header.stamp.sec == 0) && (msg->header.stamp.nanosec == 0)) {
+          RCLCPP_WARN_ONCE(node_->get_logger(), "Received command with zero timestamp, setting it to current time");
+          msg->header.stamp = node_->get_clock()->now();
+        }
+        received_velocity_msg_ptr_.set(std::move(msg));
+      });
+    } else {
+      velocity_command_unstamped_subscriber_ = node_->create_subscription<geometry_msgs::msg::Twist>(DEFAULT_COMMAND_UNSTAMPED_TOPIC, rclcpp::SystemDefaultsQoS(), [this](const std::shared_ptr<geometry_msgs::msg::Twist> msg) -> void {
+        if (!subscriber_is_active_) {
+          RCLCPP_WARN(node_->get_logger(), "Command subscriber inactive");
+          return;
+        }
+
+        std::shared_ptr<Twist> twist_stamped;
+        received_velocity_msg_ptr_.get(twist_stamped);
+        twist_stamped->twist = *msg;
+        twist_stamped->header.stamp = node_->get_clock()->now();
+      });
+    }
+
+    return CallbackReturn::SUCCESS;
+  }
+
+  CallbackReturn MecanumDriveController::on_activate(const rclcpp_lifecycle::State &) {
+    if (!configure_wheel_handles(wheel_names_, registered_wheel_handles_)) {
+      return CallbackReturn::ERROR;
+    }
+
+    if (registered_wheel_handles_.empty()) {
+      RCLCPP_ERROR(node_->get_logger(), "Can't find wheel interfaces");
+      return CallbackReturn::ERROR;
+    }
+
+    is_halted = false;
+    subscriber_is_active_ = true;
+    RCLCPP_DEBUG(node_->get_logger(), "Subscriber and publisher are now active.");
+  return CallbackReturn::SUCCESS;
+  }
+
+  bool MecanumDriveController::configure_wheel_handles(const std::vector<std::string> & wheel_names, std::vector<WheelHandle> & registered_handles) {
+    auto logger = node_->get_logger();
+
+    if (wheel_names.empty()) {
+      RCLCPP_ERROR(logger, "No wheel names specified");
+      return false;
+    }
+
+    registered_handles.reserve(wheel_names.size());
+    for (const auto & wheel_name : wheel_names) {
+      const auto interface_name = feedback_type();
+      const auto state_handle = std::find_if(state_interfaces_.cbegin(), state_interfaces_.cend(), [&wheel_name, &interface_name](const auto & interface) {
+        return interface.get_name() == wheel_name &&
+               interface.get_interface_name() == interface_name;
+      });
+
+      if (state_handle == state_interfaces_.cend()) {
+        RCLCPP_ERROR(logger, "Unable to obtain joint state handle for %s", wheel_name.c_str());
+        return false;
+      }
+
+      const auto command_handle = std::find_if(command_interfaces_.cbegin(), command_interfaces_.cend(), [&wheel_name](const auto & interface) {
+        return interface.get_name() == wheel_name &&
+               interface.get_interface_name() == HW_IF_VELOCITY;
+      });
+
+      if (command_handle == command_interfaces_.cend()) {
+        RCLCPP_ERROR(logger, "Unable to obtain joint command handle for %s", wheel_name.c_str());
+        return false;
+      }
+
+      registered_handles.emplace_back(
+        WheelHandle{
+          std::ref(*state_handle),
+          std::ref(*command_handle),
+        }
+      );
+    }
+
+    return true;
+  }
 }
