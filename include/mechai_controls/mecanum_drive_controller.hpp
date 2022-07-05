@@ -51,7 +51,7 @@ namespace mecanum_drive_controller {
     protected:
       struct WheelHandle {
         std::reference_wrapper<const hardware_interface::LoanedStateInterface> feedback;
-        std::reference_wrapper<const hardware_interface::LoanedCommandInterface> velocity;
+        std::reference_wrapper<hardware_interface::LoanedCommandInterface> velocity;
       };
 
       std::vector<std::string> wheel_names_;

@@ -66,7 +66,7 @@ namespace mecanum_drive_controller {
     return {interface_configuration_type::INDIVIDUAL, conf_names};
   }
 
-  controller_interface::return_type MecanumDriveController::update(const rclcpp::Time & time, const rclcpp::Duration & period) {
+  controller_interface::return_type MecanumDriveController::update(const rclcpp::Time & time, const rclcpp::Duration &) {
     auto logger = node_->get_logger();
     if (get_state().id() == State::PRIMARY_STATE_INACTIVE) {
       if (!is_halted) {
@@ -198,7 +198,7 @@ namespace mecanum_drive_controller {
         return false;
       }
 
-      const auto command_handle = std::find_if(command_interfaces_.cbegin(), command_interfaces_.cend(), [&wheel_name](const auto & interface) {
+      const auto command_handle = std::find_if(command_interfaces_.begin(), command_interfaces_.end(), [&wheel_name](const auto & interface) {
         return interface.get_name() == wheel_name &&
                interface.get_interface_name() == HW_IF_VELOCITY;
       });
@@ -215,7 +215,47 @@ namespace mecanum_drive_controller {
         }
       );
     }
-
     return true;
+  }
+
+  CallbackReturn MecanumDriveController::on_deactivate(const rclcpp_lifecycle::State &) {
+    subscriber_is_active_ = false;
+    return CallbackReturn::SUCCESS;
+  }
+
+  CallbackReturn MecanumDriveController::on_cleanup(const rclcpp_lifecycle::State &) {
+    if (!reset()) {
+      return CallbackReturn::ERROR;
+    }
+    received_velocity_msg_ptr_.set(std::make_shared<Twist>());
+    return CallbackReturn::SUCCESS;
+  }
+
+  CallbackReturn MecanumDriveController::on_error(const rclcpp_lifecycle::State &) {
+    RCLCPP_WARN(node_->get_logger(), "Error deteced resetting internal");
+    if (!reset()) {
+      return CallbackReturn::ERROR;
+    }
+    return CallbackReturn::SUCCESS;
+  }
+
+  bool MecanumDriveController::reset() {
+    std::queue<Twist> empty;
+    std::swap(previous_commands_, empty);
+
+    registered_wheel_handles_.clear();
+
+    subscriber_is_active_ = false;
+    velocity_command_subscriber_.reset();
+    velocity_command_unstamped_subscriber_.reset();
+
+    received_velocity_msg_ptr_.set(nullptr);
+
+    is_halted = false;
+    return true;
+  }
+
+  CallbackReturn MecanumDriveController::on_shutdown(const rclcpp_lifecycle::State &) {
+    return CallbackReturn::SUCCESS;
   }
 }
