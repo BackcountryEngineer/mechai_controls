@@ -90,16 +90,24 @@ namespace mecanum_drive_controller {
     const auto age_of_last_command = current_time - last_command_msg->header.stamp;
     if (age_of_last_command > cmd_vel_timeout_) {
       last_command_msg->twist.linear.x = 0.0;
-      last_command_msg->twist.angular.z =0.0;
+      last_command_msg->twist.linear.y = 0.0;
+      last_command_msg->twist.angular.z = 0.0;
     }
 
     Twist command = *last_command_msg;
-    double & linear_command = command.twist.linear.x;
-    double & angular_command = command.twist.angular.z;
+    double & linear_x = command.twist.linear.x;
+    double & linear_y = command.twist.linear.y;
+    double & angular_z = command.twist.angular.z;
 
-    for (const auto & wheel_handle : registered_wheel_handles_) {
-      //Wheel velocity placeholder calculations
-      wheel_handle.velocity.get().set_value(linear_command + angular_command);
+    //Compute wheel velocities
+    double front_left = linear_y + linear_x + angular_z;
+    double front_right = linear_y - linear_x + angular_z;
+    double back_left = linear_y - linear_x - angular_z;
+    double back_right = linear_y + linear_x - angular_z;
+    std::vector<double> wheel_velocities = {front_left, front_right, back_left, back_right};
+
+    for (size_t i = 0; i < registered_wheel_handles_.size(); ++i) {
+      registered_wheel_handles_[i].velocity.get().set_value(wheel_velocities[i]);
     }
 
     return controller_interface::return_type::OK;
