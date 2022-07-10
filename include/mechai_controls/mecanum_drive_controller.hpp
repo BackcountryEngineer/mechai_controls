@@ -26,6 +26,13 @@ namespace mecanum_drive_controller {
     using Twist = geometry_msgs::msg::TwistStamped;
 
     public:
+      enum wheels {
+        FRONT_LEFT = 0,
+        FRONT_RIGHT = 1,
+        BACK_LEFT = 2,
+        BACK_RIGHT = 3,
+      };
+
       MecanumDriveController();
 
       controller_interface::InterfaceConfiguration command_interface_configuration() const override;
@@ -58,10 +65,9 @@ namespace mecanum_drive_controller {
       std::vector<WheelHandle> registered_wheel_handles_;
 
       struct WheelParams {
-        double separation = 0.0;  // w.r.t. the midpoint of the wheel width
-        double radius = 0.0;      // Assumed to be the same for both wheels
-        double separation_multiplier = 1.0;
-        double radius_multiplier = 1.0;
+        double separation_w = 0.0;  // separation side to side
+        double separation_l = 0.0; //separation front and back
+        double radius = 0.0;      // same for all wheels
       } wheel_params_;
 
       struct OdometryParams {
@@ -82,6 +88,7 @@ namespace mecanum_drive_controller {
       std::queue<Twist> previous_commands_;  // last two commands
 
       auto feedback_type() const;
+      void update_wheel_velocities(double vx, double vy, double va);
 
       std::chrono::milliseconds cmd_vel_timeout_{500};
 

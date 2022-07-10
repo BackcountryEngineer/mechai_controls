@@ -35,10 +35,9 @@ namespace mecanum_drive_controller {
   CallbackReturn MecanumDriveController::on_init() {
     try {
       auto_declare<std::vector<std::string>>("wheel_names", std::vector<std::string>());
-      auto_declare<double>("wheel_separation", wheel_params_.separation);
+      auto_declare<double>("wheel_separation_w", wheel_params_.separation_w);
+      auto_declare<double>("wheel_separation_l", wheel_params_.separation_l);
       auto_declare<double>("wheel_radius", wheel_params_.radius);
-      auto_declare<double>("wheel_separation_multiplier", wheel_params_.separation_multiplier);
-      auto_declare<double>("wheel_radius_multiplier", wheel_params_.radius_multiplier);
 
       auto_declare<bool>("position_feedback", odom_params_.position_feedback);
 
@@ -99,18 +98,25 @@ namespace mecanum_drive_controller {
     double & linear_y = command.twist.linear.y;
     double & angular_z = command.twist.angular.z;
 
-    //Compute wheel velocities
-    double front_left = linear_y + linear_x + angular_z;
-    double front_right = linear_y - linear_x + angular_z;
-    double back_left = linear_y - linear_x - angular_z;
-    double back_right = linear_y + linear_x - angular_z;
-    std::vector<double> wheel_velocities = {front_left, front_right, back_left, back_right};
-
-    for (size_t i = 0; i < registered_wheel_handles_.size(); ++i) {
-      registered_wheel_handles_[i].velocity.get().set_value(wheel_velocities[i]);
-    }
+    update_wheel_velocities(linear_x, linear_y, angular_z);
 
     return controller_interface::return_type::OK;
+  }
+
+  void MecanumDriveController::update_wheel_velocities(double vx, double vy, double va) {
+    const double wheel_w_separation = wheel_params_.separation_w;
+    const double wheel_l_separation = wheel_params_.separation_l;
+    const double wheel_diameter = wheel_params_.radius;
+    
+    auto v_front_left = (vx - vy - va * (wheel_w_separation + wheel_l_separation) / 2.0) / wheel_diameter * 2;
+    auto v_front_right = (vx + vy + va * (wheel_w_separation + wheel_l_separation) / 2.0) / wheel_diameter * 2;
+    auto v_back_left = (vx + vy - va * (wheel_w_separation + wheel_l_separation) / 2.0) / wheel_diameter * 2;
+    auto v_back_right = (vx - vy + va * (wheel_w_separation + wheel_l_separation) / 2.0) / wheel_diameter * 2;
+
+    registered_wheel_handles_[FRONT_LEFT].velocity.get().set_value(v_front_left);
+    registered_wheel_handles_[FRONT_RIGHT].velocity.get().set_value(v_front_right);
+    registered_wheel_handles_[BACK_LEFT].velocity.get().set_value(v_back_left);
+    registered_wheel_handles_[BACK_RIGHT].velocity.get().set_value(v_back_right);
   }
 
   CallbackReturn MecanumDriveController::on_configure(const rclcpp_lifecycle::State &) {
@@ -121,13 +127,9 @@ namespace mecanum_drive_controller {
       return CallbackReturn::ERROR;
     }
 
-    wheel_params_.separation = node_->get_parameter("wheel_separation").as_double();
+    wheel_params_.separation_w = node_->get_parameter("wheel_separation_w").as_double();
+    wheel_params_.separation_l = node_->get_parameter("wheel_separation_l").as_double();
     wheel_params_.radius = node_->get_parameter("wheel_radius").as_double();
-    wheel_params_.separation_multiplier = node_->get_parameter("wheel_separation_multiplier").as_double();
-    wheel_params_.radius_multiplier = node_->get_parameter("wheel_radius_multiplier").as_double();
-
-    const double wheel_separation = wheel_params_.separation_multiplier * wheel_params_.separation;
-    const double wheel_radius = wheel_params_.radius_multiplier * wheel_params_.radius;
 
     odom_params_.open_loop = node_->get_parameter("open_loop").as_bool();
     odom_params_.position_feedback = node_->get_parameter("position_feedback").as_bool();
