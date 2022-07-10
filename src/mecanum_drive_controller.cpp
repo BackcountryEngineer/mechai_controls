@@ -269,3 +269,8 @@ namespace mecanum_drive_controller {
     return CallbackReturn::SUCCESS;
   }
 }
+
+#include "class_loader/register_macro.hpp"
+
+CLASS_LOADER_REGISTER_CLASS(
+  mecanum_drive_controller::MecanumDriveController, controller_interface::ControllerInterface)
