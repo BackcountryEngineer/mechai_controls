@@ -5,13 +5,13 @@ controller_manager:
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
 
-    mecanum_drive_base_controller:
+    mecanum_drive_controller:
       type: mechai_controls/MecanumDriveController
 
-mecanum_drive_base_controller:
+mecanum_drive_controller:
   ros__parameters:
-    left_wheel_names: ["left_wheel_joint"]
-    right_wheel_names: ["right_wheel_joint"]
+    # Wheel position names are base on looking top down with the x configuration of wheels
+    wheel_names: ["front_left_wheel_joint", "front_right_wheel_joint", "back_left_wheel_joint", "back_right_wheel_joint"]
 
     wheel_separation_w: 0.4
     wheel_separation_l: 0.4
