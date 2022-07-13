@@ -19,6 +19,7 @@
 #include <realtime_tools/realtime_publisher.h>
 
 namespace mecanum_drive_controller {
+  constexpr size_t NUM_DIMENSIONS = 6;
   using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
 
   // ROS 2 integrated controller for mecanum wheel base chasises. A mechanum wheeled robot uses wheels that are composed of slanted rollers, affording the ability for full degree of freedom in a plane, including in place rotations. This controller assumes a X configuration of the wheels looking from top down, as this configuration allows for much better rotation control.

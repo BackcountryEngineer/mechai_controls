@@ -10,7 +10,6 @@ constexpr auto DEFAULT_COMMAND_UNSTAMPED_TOPIC = "~/cmd_vel_unstamped";
 constexpr auto DEFAULT_COMMAND_OUT_TOPIC = "~/cmd_vel_out";
 constexpr auto DEFAULT_ODOMETRY_TOPIC = "~/odom";
 constexpr auto DEFAULT_TRANSFORM_TOPIC = "/tf";
-constexpr size_t NUM_DIMENSIONS = 6;
 }  // local constants
 
 namespace mecanum_drive_controller {
@@ -137,6 +136,14 @@ namespace mecanum_drive_controller {
     previous_commands_.pop();
     previous_commands_.emplace(command);
 
+    //publish result limited velocity
+    if (publish_limited_velocity_ && realtime_limited_velocity_publisher_->trylock()) {
+      auto & limited_velocity_command = realtime_limited_velocity_publisher_->msg_;
+      limited_velocity_command.header.stamp = current_time;
+      limited_velocity_command.twist = command.twist;
+      realtime_limited_velocity_publisher_->unlockAndPublish();
+    }
+
     update_wheel_velocities(linear_x, linear_y, angular_z);
 
     return controller_interface::return_type::OK;
@@ -237,7 +244,7 @@ namespace mecanum_drive_controller {
     //fills in zeros for message values
     odom_msg.twist = geometry_msgs::msg::TwistWithCovariance(rosidl_runtime_cpp::MessageInitialization::ALL); 
 
-    for (auto idx = 0; idx < NUM_DIMENSIONS; ++idx) {
+    for (size_t idx = 0; idx < NUM_DIMENSIONS; ++idx) {
       auto diagonal_idx = NUM_DIMENSIONS * idx + idx;
       odom_msg.pose.covariance[diagonal_idx] = odom_params_.pose_covariance_diagonal[diagonal_idx];
       odom_msg.twist.covariance[diagonal_idx] = odom_params_.twist_covariance_diagonal[diagonal_idx];
