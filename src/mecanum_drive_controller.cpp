@@ -10,6 +10,7 @@ constexpr auto DEFAULT_COMMAND_UNSTAMPED_TOPIC = "~/cmd_vel_unstamped";
 constexpr auto DEFAULT_COMMAND_OUT_TOPIC = "~/cmd_vel_out";
 constexpr auto DEFAULT_ODOMETRY_TOPIC = "~/odom";
 constexpr auto DEFAULT_TRANSFORM_TOPIC = "/tf";
+constexpr size_t NUM_DIMENSIONS = 6;
 }  // local constants
 
 namespace mecanum_drive_controller {
@@ -39,9 +40,18 @@ namespace mecanum_drive_controller {
       auto_declare<double>("wheel_separation_l", wheel_params_.separation_l);
       auto_declare<double>("wheel_radius", wheel_params_.radius);
 
+      auto_declare<double>("publish_rate", publish_rate_);
+
+      auto_declare<std::string>("odom_frame_id", odom_params_.odom_frame_id);
+      auto_declare<std::string>("base_frame_id", odom_params_.base_frame_id);
+      
+      auto_declare<bool>("open_loop", odom_params_.open_loop);
       auto_declare<bool>("position_feedback", odom_params_.position_feedback);
 
       auto_declare<double>("cmd_vel_timeout", cmd_vel_timeout_.count() / 1000.0);
+      auto_declare<bool>("publish_limited_velocity", publish_limited_velocity_);
+      auto_declare<bool>("use_stamped_vel", use_stamped_vel_);
+      auto_declare<int>("velocity_rolling_window_size", 10);
     } catch (const std::exception &e) {
       return CallbackReturn::ERROR;
     }
@@ -82,12 +92,13 @@ namespace mecanum_drive_controller {
     received_velocity_msg_ptr_.get(last_command_msg);
 
     if (last_command_msg == nullptr) {
-      RCLCPP_WARN(logger, "Last recieved command is nullptr");
+      RCLCPP_WARN(logger, "No latest command, recieved nullptr");
       return controller_interface::return_type::ERROR;
     }
 
     const auto age_of_last_command = current_time - last_command_msg->header.stamp;
     if (age_of_last_command > cmd_vel_timeout_) {
+      //Stop if lastest command is stale
       last_command_msg->twist.linear.x = 0.0;
       last_command_msg->twist.linear.y = 0.0;
       last_command_msg->twist.angular.z = 0.0;
@@ -98,6 +109,34 @@ namespace mecanum_drive_controller {
     double & linear_y = command.twist.linear.y;
     double & angular_z = command.twist.angular.z;
 
+    if (previous_publish_timestamp_ + publish_period_ < current_time) {
+      previous_publish_timestamp_ += publish_period_;
+
+      if (realtime_odometry_publisher_->trylock()) {
+        auto & odom_msg = realtime_odometry_publisher_->msg_;
+        odom_msg.header.stamp = current_time;
+        odom_msg.pose.pose.position.x = 0;
+        odom_msg.pose.pose.position.y = 0;
+        odom_msg.pose.pose.position.z = 0;
+        odom_msg.pose.pose.orientation.x = 0;
+        odom_msg.pose.pose.orientation.y = 0;
+        odom_msg.pose.pose.orientation.z = 0;
+        odom_msg.pose.pose.orientation.w = 0;
+        odom_msg.twist.twist.linear.x = 0;
+        odom_msg.twist.twist.angular.z = 0;
+      }
+    }
+
+    const auto update_dt = current_time - previous_update_timestamp_;
+    previous_update_timestamp_ = current_time;
+
+    //enforce velocity limits
+    // auto & last_command = previous_commands_.back().twist;
+    // auto & second_to_last_command = previous_commands_.front().twist;
+
+    previous_commands_.pop();
+    previous_commands_.emplace(command);
+
     update_wheel_velocities(linear_x, linear_y, angular_z);
 
     return controller_interface::return_type::OK;
@@ -106,7 +145,7 @@ namespace mecanum_drive_controller {
   void MecanumDriveController::update_wheel_velocities(double vx, double vy, double va) {
     const double wheel_w_separation = wheel_params_.separation_w;
     const double wheel_l_separation = wheel_params_.separation_l;
-    const double wheel_diameter = wheel_params_.radius;
+    const double wheel_diameter = 2 * wheel_params_.radius;
     
     auto v_front_left = (vx - vy - va * (wheel_w_separation + wheel_l_separation) / 2.0) / wheel_diameter * 2;
     auto v_front_right = (vx + vy + va * (wheel_w_separation + wheel_l_separation) / 2.0) / wheel_diameter * 2;
@@ -134,7 +173,22 @@ namespace mecanum_drive_controller {
     odom_params_.open_loop = node_->get_parameter("open_loop").as_bool();
     odom_params_.position_feedback = node_->get_parameter("position_feedback").as_bool();
 
+    odom_params_.odom_frame_id = node_->get_parameter("odom_frame_id").as_string();
+    odom_params_.base_frame_id = node_->get_parameter("base_frame_id").as_string();
+
     cmd_vel_timeout_ = std::chrono::milliseconds{static_cast<int>(node_->get_parameter("cmd_vel_timeout").as_double() * 1000.0)};
+
+    publish_limited_velocity_ = node_->get_parameter("publish_limited_velocity").as_bool();
+    use_stamped_vel_ = node_->get_parameter("use_stamped_vel").as_bool();
+
+    if (!reset()) {
+      return CallbackReturn::ERROR;
+    }
+
+    if (publish_limited_velocity_) {
+      limited_velocity_publisher_ = node_->create_publisher<Twist>(DEFAULT_COMMAND_OUT_TOPIC, rclcpp::SystemDefaultsQoS());
+      realtime_limited_velocity_publisher_ = std::make_shared<realtime_tools::RealtimePublisher<Twist>>(limited_velocity_publisher_);
+    }
 
     const Twist empty_twist;
     received_velocity_msg_ptr_.set(std::make_shared<Twist>(empty_twist));
@@ -167,6 +221,29 @@ namespace mecanum_drive_controller {
         twist_stamped->header.stamp = node_->get_clock()->now();
       });
     }
+
+    //initialize odometry feedback
+    odometry_publisher_ = node_->create_publisher<nav_msgs::msg::Odometry>(DEFAULT_ODOMETRY_TOPIC, rclcpp::SystemDefaultsQoS());
+    realtime_odometry_publisher_ = std::make_shared<realtime_tools::RealtimePublisher<nav_msgs::msg::Odometry>>(odometry_publisher_);
+
+    auto & odom_msg = realtime_odometry_publisher_->msg_;
+    odom_msg.header.frame_id = odom_params_.odom_frame_id;
+    odom_msg.child_frame_id = odom_params_.base_frame_id;
+
+    publish_rate_ = node_->get_parameter("publish_rate").as_double();
+    publish_period_ = rclcpp::Duration::from_seconds(1.0 / publish_rate_);
+    previous_publish_timestamp_ = node_->get_clock()->now();
+
+    //fills in zeros for message values
+    odom_msg.twist = geometry_msgs::msg::TwistWithCovariance(rosidl_runtime_cpp::MessageInitialization::ALL); 
+
+    for (auto idx = 0; idx < NUM_DIMENSIONS; ++idx) {
+      auto diagonal_idx = NUM_DIMENSIONS * idx + idx;
+      odom_msg.pose.covariance[diagonal_idx] = odom_params_.pose_covariance_diagonal[diagonal_idx];
+      odom_msg.twist.covariance[diagonal_idx] = odom_params_.twist_covariance_diagonal[diagonal_idx];
+    }
+
+    previous_update_timestamp_ = node_->get_clock()->now();
 
     return CallbackReturn::SUCCESS;
   }

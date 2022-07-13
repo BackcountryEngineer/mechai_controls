@@ -21,7 +21,7 @@
 namespace mecanum_drive_controller {
   using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
 
-  // ROS 2 integrated controller for mecanum wheel base chasises. A mechanum wheeled robot uses wheels that are composed of slanted rollers, affording the ability have the full degree of freedom in a plane, including in place rotations. This controller assumes a X configuration of the wheels looking from top down, as this configuration allows for much better rotation control.
+  // ROS 2 integrated controller for mecanum wheel base chasises. A mechanum wheeled robot uses wheels that are composed of slanted rollers, affording the ability for full degree of freedom in a plane, including in place rotations. This controller assumes a X configuration of the wheels looking from top down, as this configuration allows for much better rotation control.
   class MecanumDriveController : public controller_interface::ControllerInterface {
     using Twist = geometry_msgs::msg::TwistStamped;
 
@@ -73,15 +73,22 @@ namespace mecanum_drive_controller {
       struct OdometryParams {
         bool open_loop = false;
         bool position_feedback = true;
-        bool enable_odom_tf = true;
         std::string base_frame_id = "base_link";
         std::string odom_frame_id = "odom";
+        std::array<double, NUM_DIMENSIONS> pose_covariance_diagonal;
+        std::array<double, NUM_DIMENSIONS> twist_covariance_diagonal;
       } odom_params_;
+
+      std::shared_ptr<rclcpp::Publisher<nav_msgs::msg::Odometry>> odometry_publisher_ = nullptr;
+      std::shared_ptr<realtime_tools::RealtimePublisher<nav_msgs::msg::Odometry>> realtime_odometry_publisher_ = nullptr;
 
       bool subscriber_is_active_ = false;
       rclcpp::Subscription<Twist>::SharedPtr velocity_command_subscriber_ = nullptr;
       rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr
         velocity_command_unstamped_subscriber_ = nullptr;
+
+      std::shared_ptr<rclcpp::Publisher<Twist>> limited_velocity_publisher_ = nullptr;
+      std::shared_ptr<realtime_tools::RealtimePublisher<Twist>> realtime_limited_velocity_publisher_ = nullptr;
 
       realtime_tools::RealtimeBox<std::shared_ptr<Twist>> received_velocity_msg_ptr_{nullptr};
 
@@ -93,7 +100,15 @@ namespace mecanum_drive_controller {
       std::chrono::milliseconds cmd_vel_timeout_{500};
 
       bool is_halted = false;
+
+      double publish_rate_ = 50.0;
+      bool publish_limited_velocity_ = false;
       bool use_stamped_vel_ = true;
+
+      rclcpp::Duration publish_period_ = rclcpp::Duration::from_nanoseconds(0);
+
+      rclcpp::Time previous_update_timestamp_{0};
+      rclcpp::Time previous_publish_timestamp_{0};
 
       bool reset();
       void halt();
