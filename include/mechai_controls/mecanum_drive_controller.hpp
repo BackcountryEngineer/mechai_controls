@@ -96,7 +96,10 @@ namespace mecanum_drive_controller {
       std::queue<Twist> previous_commands_;  // last two commands
 
       auto feedback_type() const;
-      void update_wheel_velocities(double vx, double vy, double va);
+      void publish_odometry(const rclcpp::Time & current_time);
+      void bound_velocity(const rclcpp::Time & current_time, Twist & command);
+      void publish_bounded_velocity(const rclcpp::Time & current_time, Twist & command);
+      void update_wheel_velocities(Twist & command);
 
       std::chrono::milliseconds cmd_vel_timeout_{500};
 
