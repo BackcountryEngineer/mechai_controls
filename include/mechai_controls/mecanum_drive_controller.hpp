@@ -22,7 +22,12 @@ namespace mecanum_drive_controller {
   constexpr size_t NUM_DIMENSIONS = 6;
   using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
 
-  // ROS 2 integrated controller for mecanum wheel base chasises. A mechanum wheeled robot uses wheels that are composed of slanted rollers, affording the ability for full degree of freedom in a plane, including in place rotations. This controller assumes a X configuration of the wheels looking from top down, as this configuration allows for much better rotation control.
+  /*
+    ROS 2 integrated controller for mecanum wheel base chasises. A mechanum wheeled robot uses wheels that are composed of slanted rollers, affording the ability for full degree of freedom in a plane, including in place rotations. This controller assumes a X configuration of the wheels looking from top down, as this configuration allows for much better rotation control.
+
+    Make use of the kinematic model derived here:
+    https://research.ijcaonline.org/volume113/number3/pxc3901586.pdf
+  */
   class MecanumDriveController : public controller_interface::ControllerInterface {
     using Twist = geometry_msgs::msg::TwistStamped;
 
@@ -96,12 +101,16 @@ namespace mecanum_drive_controller {
       std::queue<Twist> previous_commands_;  // last two commands
 
       auto feedback_type() const;
-      void publish_odometry(const rclcpp::Time & current_time);
       void bound_velocity(const rclcpp::Time & current_time, Twist & command);
-      void publish_bounded_velocity(const rclcpp::Time & current_time, Twist & command);
-      void update_wheel_velocities(Twist & command);
+      void publish_odometry(const rclcpp::Time & current_time, const Twist & command);
+      void publish_velocity(const rclcpp::Time & current_time, const Twist & command);
+      void update_wheel_velocities(const Twist & command);
 
       std::chrono::milliseconds cmd_vel_timeout_{500};
+
+      double px_ = 0;
+      double py_ = 0;
+      double heading_ = 0;
 
       bool is_halted = false;
 

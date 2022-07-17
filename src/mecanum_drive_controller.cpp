@@ -1,5 +1,6 @@
 #include <hardware_interface/types/hardware_interface_type_values.hpp>
 #include <lifecycle_msgs/msg/state.hpp>
+#include <tf2/LinearMath/Quaternion.h>
 
 #include "mechai_controls/mecanum_drive_controller.hpp"
 
@@ -105,46 +106,60 @@ namespace mecanum_drive_controller {
 
     Twist command = *last_command_msg;
 
-    publish_odometry(current_time);
-
     bound_velocity(current_time, command);
 
-    publish_bounded_velocity(current_time, command);
+    publish_odometry(current_time, command);
+
+    publish_velocity(current_time, command);
 
     update_wheel_velocities(command);
+
+    previous_update_timestamp_ = current_time;
 
     return controller_interface::return_type::OK;
   }
 
-  void MecanumDriveController::publish_odometry(const rclcpp::Time & current_time) {
-    //initial implementation open loop odom feedback only
-    // const double dt = current_time.seconds() - 
+  void MecanumDriveController::publish_odometry(const rclcpp::Time & current_time, const Twist & command) {
+    //initial implementation open loop odom only
+    const double dt = current_time.seconds() - previous_update_timestamp_.seconds();
+
+    const double linear_x = command.twist.linear.x * dt;
+    const double linear_y = command.twist.linear.y * dt;
+    const double angular_z = command.twist.angular.z * dt;
+
+    const double heading_old = heading_;
+    const double rx = linear_x / angular_z;
+    const double ry = linear_y / angular_z;
+    heading_ += angular_z;
+    px_ += (rx * sin(heading_) - sin(heading_old)) + (ry * cos(heading_) - cos(heading_old));
+    py_ = (-rx * cos(heading_) - cos(heading_old)) + (-ry * sin(heading_) - sin(heading_old));
+
+    tf2::Quaternion orientation;
+    orientation.setRPY(0.0, 0.0, heading_);
 
     if (previous_publish_timestamp_ + publish_period_ < current_time) {
       previous_publish_timestamp_ += publish_period_;
       if (realtime_odometry_publisher_->trylock()) {
         auto & odom_msg = realtime_odometry_publisher_->msg_;
         odom_msg.header.stamp = current_time;
-        odom_msg.pose.pose.position.x = 0;
-        odom_msg.pose.pose.position.y = 0;
-        odom_msg.pose.pose.position.z = 0;
-        odom_msg.pose.pose.orientation.x = 0;
-        odom_msg.pose.pose.orientation.y = 0;
-        odom_msg.pose.pose.orientation.z = 0;
-        odom_msg.pose.pose.orientation.w = 0;
-        odom_msg.twist.twist.linear.x = 0;
-        odom_msg.twist.twist.angular.z = 0;
-        realtime_limited_velocity_publisher_->unlockAndPublish();
+        odom_msg.pose.pose.position.x = px_;
+        odom_msg.pose.pose.position.y = py_;
+        odom_msg.pose.pose.orientation.x = orientation.x();
+        odom_msg.pose.pose.orientation.y = orientation.y();
+        odom_msg.pose.pose.orientation.z = orientation.z();
+        odom_msg.pose.pose.orientation.w = orientation.w();
+        odom_msg.twist.twist = command.twist;
+        realtime_odometry_publisher_->unlockAndPublish();
       }
     }
   }
 
   void MecanumDriveController::bound_velocity(const rclcpp::Time & current_time, Twist & command) {
+    //note this function will modify the pass in command to bound the command velocities
     const auto update_dt = current_time - previous_update_timestamp_;
-    previous_update_timestamp_ = current_time;
 
-    auto & last_command = previous_commands_.back().twist;
-    auto & second_to_last_command = previous_commands_.front().twist;
+    // auto & last_command = previous_commands_.back().twist;
+    // auto & second_to_last_command = previous_commands_.front().twist;
     // limiter_linear_.limit(
     //   command.twist.linear.x, last_command.linear.x, second_to_last_command.linear.x, update_dt.seconds());
     // limiter_angular_.limit(
@@ -154,8 +169,7 @@ namespace mecanum_drive_controller {
     previous_commands_.emplace(command);
   }
 
-  void MecanumDriveController::publish_bounded_velocity(const rclcpp::Time & current_time, Twist & command) {
-    
+  void MecanumDriveController::publish_bounded_velocity(const rclcpp::Time & current_time, const Twist & command) {
     if (publish_limited_velocity_ && realtime_limited_velocity_publisher_->trylock()) {
       auto & limited_velocity_command = realtime_limited_velocity_publisher_->msg_;
       limited_velocity_command.header.stamp = current_time;
@@ -164,19 +178,15 @@ namespace mecanum_drive_controller {
     }
   }
 
-  void MecanumDriveController::update_wheel_velocities(Twist & command) {
+  void MecanumDriveController::update_wheel_velocities(const Twist & command) {
     const double vx = command.twist.linear.x;
     const double vy = command.twist.linear.y;
     const double va = command.twist.angular.z;
     
-    const double wheel_w_separation = wheel_params_.separation_w;
-    const double wheel_l_separation = wheel_params_.separation_l;
-    const double wheel_diameter = 2 * wheel_params_.radius;
-    
-    auto v_front_left = (vx - vy - va * (wheel_w_separation + wheel_l_separation) / 2.0) / wheel_diameter * 2;
-    auto v_front_right = (vx + vy + va * (wheel_w_separation + wheel_l_separation) / 2.0) / wheel_diameter * 2;
-    auto v_back_left = (vx + vy - va * (wheel_w_separation + wheel_l_separation) / 2.0) / wheel_diameter * 2;
-    auto v_back_right = (vx - vy + va * (wheel_w_separation + wheel_l_separation) / 2.0) / wheel_diameter * 2;
+    auto v_front_left = (vx - vy - va * (wheel_params_.separation_w + wheel_params_.separation_l) / 2.0) / wheel_params_.radius;
+    auto v_front_right = (vx + vy + va * (wheel_params_.separation_w + wheel_params_.separation_l) / 2.0) / wheel_params_.radius;
+    auto v_back_left = (vx + vy - va * (wheel_params_.separation_w + wheel_params_.separation_l) / 2.0) / wheel_params_.radius;
+    auto v_back_right = (vx - vy + va * (wheel_params_.separation_w + wheel_params_.separation_l) / 2.0) / wheel_params_.radius;
 
     registered_wheel_handles_[FRONT_LEFT].velocity.get().set_value(v_front_left);
     registered_wheel_handles_[FRONT_RIGHT].velocity.get().set_value(v_front_right);
@@ -365,6 +375,10 @@ namespace mecanum_drive_controller {
     received_velocity_msg_ptr_.set(nullptr);
 
     is_halted = false;
+    px_ = 0;
+    py_ = 0;
+    heading_ = 0;
+
     return true;
   }
 
