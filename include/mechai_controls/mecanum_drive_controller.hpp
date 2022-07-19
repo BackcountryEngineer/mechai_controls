@@ -18,6 +18,8 @@
 #include <realtime_tools/realtime_buffer.h>
 #include <realtime_tools/realtime_publisher.h>
 
+#include <rcppmath/clamp.hpp>
+
 namespace mecanum_drive_controller {
   constexpr size_t NUM_DIMENSIONS = 6;
   using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
@@ -84,6 +86,24 @@ namespace mecanum_drive_controller {
         std::array<double, NUM_DIMENSIONS> pose_covariance_diagonal;
         std::array<double, NUM_DIMENSIONS> twist_covariance_diagonal;
       } odom_params_;
+
+      struct SpeedLimiter {
+        bool has_velocity_limits = false;
+        double max_velocity = 0;
+        double min_velocity = 0;
+        double limit_velocity(double & v) {
+          const double tmp = v;
+          if (has_velocity_limits) {
+            v = rcppmath::clamp(v, min_velocity, max_velocity);
+          }
+
+          return tmp != 0.0 ? v / tmp : 1.0;
+        }
+      };
+
+      SpeedLimiter linear_x_limiter_;
+      SpeedLimiter linear_y_limiter_;
+      SpeedLimiter angular_z_limiter_;
 
       std::shared_ptr<rclcpp::Publisher<nav_msgs::msg::Odometry>> odometry_publisher_ = nullptr;
       std::shared_ptr<realtime_tools::RealtimePublisher<nav_msgs::msg::Odometry>> realtime_odometry_publisher_ = nullptr;

@@ -45,13 +45,23 @@ namespace mecanum_drive_controller {
       auto_declare<std::string>("odom_frame_id", odom_params_.odom_frame_id);
       auto_declare<std::string>("base_frame_id", odom_params_.base_frame_id);
       
-      auto_declare<bool>("open_loop", odom_params_.open_loop);
-      auto_declare<bool>("position_feedback", odom_params_.position_feedback);
+      // auto_declare<bool>("open_loop", odom_params_.open_loop);
+      // auto_declare<bool>("position_feedback", odom_params_.position_feedback);
 
       auto_declare<double>("cmd_vel_timeout", cmd_vel_timeout_.count() / 1000.0);
       auto_declare<bool>("publish_limited_velocity", publish_limited_velocity_);
       auto_declare<bool>("use_stamped_vel", use_stamped_vel_);
-      auto_declare<int>("velocity_rolling_window_size", 10);
+      // auto_declare<int>("velocity_rolling_window_size", 10);
+
+      auto_declare<bool>("linear.x.has_velocity_limits", false);
+      auto_declare<bool>("linear.y.has_velocity_limits", false);
+      auto_declare<bool>("angular.z.has_velocity_limits", false);
+      auto_declare<double>("linear.x.max_velocity", NAN);
+      auto_declare<double>("linear.x.min_velocity", NAN);
+      auto_declare<double>("linear.y.max_velocity", NAN);
+      auto_declare<double>("linear.y.min_velocity", NAN);
+      auto_declare<double>("angular.z.max_velocity", NAN);
+      auto_declare<double>("angular.z.min_velocity", NAN);
     } catch (const std::exception &e) {
       return CallbackReturn::ERROR;
     }
@@ -119,6 +129,22 @@ namespace mecanum_drive_controller {
     return controller_interface::return_type::OK;
   }
 
+  void MecanumDriveController::bound_velocity(const rclcpp::Time & current_time, Twist & command) {
+    //note this function will mutate the pass in command to bound the command velocities
+    // const auto update_dt = current_time - previous_update_timestamp_;
+
+    // auto & last_command = previous_commands_.back().twist;
+    // auto & second_to_last_command = previous_commands_.front().twist;
+    
+
+    // previous_commands_.pop();
+    // previous_commands_.emplace(command);
+
+    command.twist.linear.x = linear_x_limiter_.limit_velocity(command.twist.linear.x);
+    command.twist.linear.y = linear_y_limiter_.limit_velocity(command.twist.linear.y);
+    command.twist.angular.z = angular_z_limiter_.limit_velocity(command.twist.angular.z);
+  }
+
   void MecanumDriveController::publish_odometry(const rclcpp::Time & current_time, const Twist & command) {
     //initial implementation open loop odom only
     const double dt = current_time.seconds() - previous_update_timestamp_.seconds();
@@ -154,23 +180,8 @@ namespace mecanum_drive_controller {
     }
   }
 
-  void MecanumDriveController::bound_velocity(const rclcpp::Time & current_time, Twist & command) {
-    //note this function will modify the pass in command to bound the command velocities
-    const auto update_dt = current_time - previous_update_timestamp_;
-
-    // auto & last_command = previous_commands_.back().twist;
-    // auto & second_to_last_command = previous_commands_.front().twist;
-    // limiter_linear_.limit(
-    //   command.twist.linear.x, last_command.linear.x, second_to_last_command.linear.x, update_dt.seconds());
-    // limiter_angular_.limit(
-    //   command.twist.angular.z, last_command.angular.z, second_to_last_command.angular.z, update_dt.seconds());
-
-    previous_commands_.pop();
-    previous_commands_.emplace(command);
-  }
-
-  void MecanumDriveController::publish_bounded_velocity(const rclcpp::Time & current_time, const Twist & command) {
-    if (publish_limited_velocity_ && realtime_limited_velocity_publisher_->trylock()) {
+  void MecanumDriveController::publish_velocity(const rclcpp::Time & current_time, const Twist & command) {
+    if (publish_limited_velocity_ &&                realtime_limited_velocity_publisher_->trylock()) {
       auto & limited_velocity_command = realtime_limited_velocity_publisher_->msg_;
       limited_velocity_command.header.stamp = current_time;
       limited_velocity_command.twist = command.twist;
@@ -216,6 +227,28 @@ namespace mecanum_drive_controller {
 
     publish_limited_velocity_ = node_->get_parameter("publish_limited_velocity").as_bool();
     use_stamped_vel_ = node_->get_parameter("use_stamped_vel").as_bool();
+
+    try {
+      linear_x_limiter_ = SpeedLimiter {
+        node_->get_parameter("linear.x.has_velocity_limits").as_bool(),
+        node_->get_parameter("linear.x.max_velocity").as_double(),
+        node_->get_parameter("linear.x.min_velocity").as_double(),
+      };
+        
+      linear_y_limiter_ = SpeedLimiter {
+        node_->get_parameter("linear.y.has_velocity_limits").as_bool(),
+        node_->get_parameter("linear.y.max_velocity").as_double(),
+        node_->get_parameter("linear.y.min_velocity").as_double(),
+      };
+
+      angular_z_limiter_ = SpeedLimiter {
+        node_->get_parameter("angular.z.has_velocity_limits").as_bool(),
+        node_->get_parameter("angular.z.max_velocity").as_double(),
+        node_->get_parameter("angular.z.min_velocity").as_double(),
+      };
+    } catch (const std::runtime_error & e) {
+      RCLCPP_ERROR(node_->get_logger(), "Error configuring speed limitiers %s", e.what());
+    }
 
     if (!reset()) {
       return CallbackReturn::ERROR;
