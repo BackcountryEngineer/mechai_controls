@@ -45,8 +45,8 @@ namespace mecanum_drive_controller {
       auto_declare<std::string>("odom_frame_id", odom_params_.odom_frame_id);
       auto_declare<std::string>("base_frame_id", odom_params_.base_frame_id);
       
-      // auto_declare<bool>("open_loop", odom_params_.open_loop);
-      // auto_declare<bool>("position_feedback", odom_params_.position_feedback);
+      auto_declare<bool>("open_loop", odom_params_.open_loop);
+      auto_declare<bool>("position_feedback", odom_params_.position_feedback);
 
       auto_declare<double>("cmd_vel_timeout", cmd_vel_timeout_.count() / 1000.0);
       auto_declare<bool>("publish_limited_velocity", publish_limited_velocity_);
@@ -63,6 +63,7 @@ namespace mecanum_drive_controller {
       auto_declare<double>("angular.z.max_velocity", NAN);
       auto_declare<double>("angular.z.min_velocity", NAN);
     } catch (const std::exception &e) {
+      RCLCPP_ERROR(node_->get_logger(), "Error declaring config params %s", e.what());
       return CallbackReturn::ERROR;
     }
     return CallbackReturn::SUCCESS;
@@ -116,7 +117,7 @@ namespace mecanum_drive_controller {
 
     Twist command = *last_command_msg;
 
-    bound_velocity(current_time, command);
+    // bound_velocity(current_time, command);
 
     publish_odometry(current_time, command);
 
@@ -164,7 +165,6 @@ namespace mecanum_drive_controller {
     orientation.setRPY(0.0, 0.0, heading_);
 
     if (previous_publish_timestamp_ + publish_period_ < current_time) {
-      previous_publish_timestamp_ += publish_period_;
       if (realtime_odometry_publisher_->trylock()) {
         auto & odom_msg = realtime_odometry_publisher_->msg_;
         odom_msg.header.stamp = current_time;
@@ -177,6 +177,8 @@ namespace mecanum_drive_controller {
         odom_msg.twist.twist = command.twist;
         realtime_odometry_publisher_->unlockAndPublish();
       }
+
+      previous_publish_timestamp_ = current_time;
     }
   }
 

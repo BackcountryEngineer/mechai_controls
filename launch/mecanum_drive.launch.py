@@ -1,7 +1,8 @@
+from click import argument
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from ament_index_python.packages import get_package_share_directory
 from launch.substitutions import PathJoinSubstitution, Command, LaunchConfiguration
-from launch.actions import IncludeLaunchDescription, RegisterEventHandler, DeclareLaunchArgument
+from launch.actions import IncludeLaunchDescription, RegisterEventHandler, DeclareLaunchArgument, Shutdown
 from launch_ros.actions import Node
 from launch import LaunchDescription
 from launch.event_handlers import OnProcessExit
@@ -32,8 +33,7 @@ def generate_launch_description():
         arguments=[
             "-entity", "mecanum_drive",
             "-topic", "robot_description"
-        ],
-        output="screen"
+        ]
     )
 
     load_joint_state_interface = Node(
@@ -57,6 +57,11 @@ def generate_launch_description():
     # )
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            name="log_level",
+            default_value="warn",
+            description="Log level for nodes launched"
+        ),
         DeclareLaunchArgument(
             name="model",
             default_value=default_model_path,

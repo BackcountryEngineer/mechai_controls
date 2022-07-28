@@ -97,7 +97,7 @@ namespace mecanum_drive_controller {
             v = rcppmath::clamp(v, min_velocity, max_velocity);
           }
 
-          return tmp != 0.0 ? v / tmp : 1.0;
+          return tmp != 0.0 ? v / tmp : 0.0;
         }
       };
 
