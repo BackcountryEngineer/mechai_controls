@@ -136,7 +136,7 @@ namespace mecanum_drive_controller {
 
       double publish_rate_ = 50.0;
       bool publish_limited_velocity_ = false;
-      bool use_stamped_vel_ = true;
+      bool use_stamped_vel_ = false;
 
       rclcpp::Duration publish_period_ = rclcpp::Duration::from_nanoseconds(0);
 

@@ -97,7 +97,7 @@ namespace mecanum_drive_controller {
       return controller_interface::return_type::OK;
     }
 
-    const auto current_time = time;
+    const auto current_time = node_->get_clock()->now();
 
     std::shared_ptr<Twist> last_command_msg;
     received_velocity_msg_ptr_.get(last_command_msg);
@@ -108,6 +108,7 @@ namespace mecanum_drive_controller {
     }
 
     const auto age_of_last_command = current_time - last_command_msg->header.stamp;
+
     if (age_of_last_command > cmd_vel_timeout_) {
       //Stop if lastest command is stale
       last_command_msg->twist.linear.x = 0.0;
@@ -117,7 +118,7 @@ namespace mecanum_drive_controller {
 
     Twist command = *last_command_msg;
 
-    // bound_velocity(current_time, command);
+    bound_velocity(current_time, command);
 
     publish_odometry(current_time, command);
 
